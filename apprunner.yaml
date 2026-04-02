@@ -5,8 +5,6 @@ build:
     build:
       - pip install -r requirements.txt
 run:
-  runtime-version: 3.11.0
   command: python -m uvicorn main:app --host 0.0.0.0 --port 8080
   network:
     port: 8080
-    env: APP_PORT
