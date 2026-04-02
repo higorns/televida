@@ -1,8 +1,10 @@
 import json
 import re
-from datetime import datetime
+import html
+import uuid
+from datetime import datetime, timezone
 from typing import Dict
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
 
 class TriagemMedica:
@@ -30,20 +32,22 @@ class TriagemMedica:
             "dados": {},
             "sintomas": [],
             "red_flags": [],
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         self.etapa = "saudacao"
         return self.processar("")
 
     def processar(self, mensagem: str) -> str:
+        mensagem = html.escape(mensagem.strip())
+
         if self.etapa == "saudacao":
             self.etapa = "nome"
             return "Olá! Sou seu assistente de triagem médica. Qual é o seu nome?"
 
         elif self.etapa == "nome":
-            self.sessao["dados"]["nome"] = mensagem.strip()
+            self.sessao["dados"]["nome"] = mensagem
             self.etapa = "idade"
-            return f"Prazer, {mensagem.strip()}! Qual sua idade?"
+            return f"Prazer, {mensagem}! Qual sua idade?"
 
         elif self.etapa == "idade":
             try:
@@ -114,7 +118,7 @@ class TriagemMedica:
         )
 
     def _salvar_triagem(self, resultado: Dict):
-        log = {"timestamp": datetime.now().isoformat(), "sessao": self.sessao, "resultado": resultado}
+        log = {"timestamp": datetime.now(timezone.utc).isoformat(), "sessao": self.sessao, "resultado": resultado}
         try:
             with open("triagem_logs.jsonl", "a", encoding="utf-8") as f:
                 f.write(json.dumps(log, ensure_ascii=False) + "\n")
@@ -123,7 +127,7 @@ class TriagemMedica:
 
 
 app = FastAPI()
-triagem_instance = None
+sessoes: Dict[str, TriagemMedica] = {}
 
 
 @app.get("/health")
@@ -133,20 +137,23 @@ def health():
 
 @app.post("/iniciar")
 def iniciar_triagem():
-    global triagem_instance
-    triagem_instance = TriagemMedica()
-    return {"status": "ok", "resposta": triagem_instance.iniciar()}
+    session_id = str(uuid.uuid4())
+    triagem = TriagemMedica()
+    sessoes[session_id] = triagem
+    return {"status": "ok", "session_id": session_id, "resposta": triagem.iniciar()}
 
 
 @app.post("/triagem")
 def executar_triagem(payload: dict):
-    global triagem_instance
-    if triagem_instance is None:
-        return {"status": "erro", "mensagem": "Sessão não iniciada. Chame /iniciar primeiro."}
-    resposta = triagem_instance.processar(payload["mensagem"])
+    session_id = payload.get("session_id")
+    if not session_id or session_id not in sessoes:
+        raise HTTPException(status_code=404, detail="Sessão não encontrada. Chame /iniciar primeiro.")
+    triagem = sessoes[session_id]
+    resposta = triagem.processar(payload["mensagem"])
     return {
         "status": "ok",
-        "etapa": triagem_instance.etapa,
+        "session_id": session_id,
+        "etapa": triagem.etapa,
         "resposta": resposta,
-        "sessao": triagem_instance.sessao
+        "sessao": triagem.sessao
     }
